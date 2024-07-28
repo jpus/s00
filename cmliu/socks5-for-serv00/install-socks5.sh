@@ -2,7 +2,7 @@
 
 # 介绍信息
 echo -e "\e[32m
- ____   ___   ____ _  ______ ____  
+  ____   ___   ____ _  ______ ____  
  / ___| / _ \ / ___| |/ / ___| ___|  
  \___ \| | | | |   | ' /\___ \___ \ 
   ___) | |_| | |___| . \ ___) |__) |           不要直连
@@ -12,56 +12,15 @@ echo -e "\e[32m
 
 # 获取当前用户名
 USER=$(whoami)
+SOCKS5_DIR=/home/${USER,,}/socks5
+SOCKS5_JS="$SOCKS5_DIR/socks5.js"
+WORKDIR="/home/${USER,,}/.nezha-agent"
 
-# 检查pm2是否已安装并可用
-if command -v pm2 > /dev/null 2>&1 && [[ $(which pm2) == "/home/${USER,,}/.npm-global/bin/pm2" ]]; then
-  echo "pm2已安装且可用，跳过安装步骤。"
-else
-  # 安装pm2
-  echo "正在安装pm2，请稍候..."
-  curl -s https://raw.githubusercontent.com/k0baya/alist_repl/main/serv00/install-pm2.sh | bash
-
-  if [ $? -ne 0 ]; then
-    echo "pm2安装失败，请检查网络连接或稍后再试。"
-    exit 1
-  fi
-  echo "pm2安装成功。按任意键断开后重新连接SSH后再运行此脚本。"
-  read -n 1 -s -r -p ""  # 等待用户按任意键
-    
-  echo -e "\n断开SSH连接..."
-  exit  # 断开SSH连接
-  
-  # 检查pm2路径
-  if [[ $(which pm2) != "/home/${USER,,}/.npm-global/bin/pm2" ]]; then
-    echo "pm2未正确配置。请断开并重新连接SSH后再运行此脚本。"
-    exit 1
-  fi
-fi
+###################################################
 
 socks5_config(){
 # 提示用户输入socks5端口号
 read -p "请输入socks5端口号: " SOCKS5_PORT
-
-# 生成socks5.js文件
-cat <<EOF > socks5.js
-'use strict';
-
-const socks5 = require('node-socks5-server');
-
-const users = {
-  'user': 'password',
-};
-
-const userPassAuthFn = (user, password) => {
-  if (users[user] === password) return true;
-  return false;
-};
-
-const server = socks5.createServer({
-  userPassAuthFn,
-});
-server.listen($SOCKS5_PORT);
-EOF
 
 # 提示用户输入用户名和密码
 read -p "请输入socks5用户名: " SOCKS5_USER
@@ -76,8 +35,26 @@ while true; do
   fi
 done
 
-# 修改socks5.js文件中的用户名和密码
-sed -i '' "s/'user': 'password'/'$SOCKS5_USER': '$SOCKS5_PASS'/" socks5.js
+# 生成socks5.js文件
+cat <<EOF > $SOCKS5_JS
+'use strict';
+
+const socks5 = require('node-socks5-server');
+
+const users = {
+  '$SOCKS5_USER': '$SOCKS5_PASS',
+};
+
+const userPassAuthFn = (user, password) => {
+  if (users[user] === password) return true;
+  return false;
+};
+
+const server = socks5.createServer({
+  userPassAuthFn,
+});
+server.listen($SOCKS5_PORT);
+EOF
 }
 
 install_socks5(){
@@ -103,7 +80,7 @@ install_socks5(){
   fi
 
   # 检查socks5.js文件是否存在
-  SOCKS5_JS="$SOCKS5_DIR/socks5.js"
+  
   if [ -f "$SOCKS5_JS" ]; then
     read -p "当前目录下已经有socks5.js文件，是否要覆盖？(输入Y覆盖): " OVERWRITE_FILE
     OVERWRITE_FILE=${OVERWRITE_FILE^^} # 转换为大写
@@ -111,8 +88,12 @@ install_socks5(){
       echo "文件不覆盖。"
       #exit 1
     else
+      echo "配置socks5.js文件"
       socks5_config
     fi
+  else
+    echo "配置socks5.js文件"
+    socks5_config
   fi
 
   # 检查并删除已存在的同名pm2进程
@@ -123,6 +104,7 @@ install_socks5(){
 
   # 启动socks5.js代理
   echo "正在启动socks5代理..."
+  # pm2 start /home/$(whoami)/socks5/socks5.js --name socks_proxy
   pm2 start $SOCKS5_JS --name socks_proxy
 
   # 延迟检测以确保代理启动
@@ -148,26 +130,6 @@ install_socks5(){
     exit 1
   fi
 }
-
-# 检查socks5目录是否存在
-SOCKS5_DIR=/home/${USER,,}/socks5
-if [ -d "$SOCKS5_DIR" ]; then
-  read -p "目录$SOCKS5_DIR已经存在，是否继续安装？(Y/N): " CONTINUE_INSTALL
-  CONTINUE_INSTALL=${CONTINUE_INSTALL^^} # 转换为大写
-  if [ "$CONTINUE_INSTALL" != "Y" ]; then
-    echo "安装已取消。"
-    #exit 1
-  else
-    install_socks5
-  fi
-else
-  # 创建socks5目录
-  echo "正在创建socks5目录..."
-  mkdir -p "$SOCKS5_DIR"
-fi
-
-USERNAME=$(whoami)
-WORKDIR="/home/${USERNAME}/.nezha-agent"
 
 download_agent() {
     DOWNLOAD_LINK="https://github.com/nezhahq/agent/releases/latest/download/nezha-agent_freebsd_amd64.zip"
@@ -234,8 +196,9 @@ run_agent(){
         echo "如果面板处未上线，请检查参数是否填写正确，并停止 agent 进程，删除已安装的 agent 后重新安装！"
         echo "停止 agent 进程的命令：pgrep -f 'nezha-agent' | xargs -r kill"
         echo "删除已安装的 agent 的命令：rm -rf ~/.nezha-agent"
-        echo
-        echo "如果你想使用 pm2 管理 agent 进程，请执行：pm2 start ~/.nezha-agent/start.sh --name nezha-agent"
+        #echo
+        #echo "如果你想使用 pm2 管理 agent 进程，请执行：pm2 start ~/.nezha-agent/start.sh --name nezha-agent"
+        pm2 start /home/$(whoami)/.nezha-agent/start.sh --name nezha-agent
     else
         rm -rf "${WORKDIR}"
         echo "nezha-agent 启动失败，请检查参数填写是否正确，并重新安装！"
@@ -256,24 +219,76 @@ install_nezha_agent(){
   [ -e ${WORKDIR}/start.sh ] && run_agent
 }
 
-read -p "是否安装nezha-agent(输入Y安装): " choice
-if [[ "$choice" == "y" || "$choice" == "Y" ]]; then
-    echo "正在安装nezha-agent..."
-    install_nezha_agent
-    pm2 start /home/$USER/.nezha-agent/start.sh --name nezha-agent
+########################梦开始的地方###########################
+
+# 检查pm2是否已安装并可用
+if command -v pm2 > /dev/null 2>&1 && [[ $(which pm2) == "/home/${USER,,}/.npm-global/bin/pm2" ]]; then
+  echo "pm2已安装且可用，跳过安装步骤。"
 else
-    echo "不安装nezha-agent"
+  # 安装pm2
+  echo "正在安装pm2，请稍候..."
+  curl -s https://raw.githubusercontent.com/k0baya/alist_repl/main/serv00/install-pm2.sh | bash
+
+  if [ $? -ne 0 ]; then
+    echo "pm2安装失败，请检查网络连接或稍后再试。"
+    exit 1
+  fi
+  echo "pm2安装成功。按任意键断开后重新连接SSH后再运行此脚本。"
+  read -n 1 -s -r -p ""  # 等待用户按任意键
+    
+  echo -e "\n断开SSH连接..."
+  exit  # 断开SSH连接
+  
+  # 检查pm2路径
+  if [[ $(which pm2) != "/home/${USER,,}/.npm-global/bin/pm2" ]]; then
+    echo "pm2未正确配置。请断开并重新连接SSH后再运行此脚本。"
+    exit 1
+  fi
 fi
 
-echo "保存当前pm2进程列表"
-pm2 save
+read -p "是否安装socks5(Y/N): " socks5choice
+socks5choice=${socks5choice^^} # 转换为大写
+if [ "$socks5choice" == "Y" ]; then
+  # 检查socks5目录是否存在
+  
+  if [ -d "$SOCKS5_DIR" ]; then
+    read -p "目录$SOCKS5_DIR已经存在，是否继续安装？(Y/N): " CONTINUE_INSTALL
+    CONTINUE_INSTALL=${CONTINUE_INSTALL^^} # 转换为大写
+    if [ "$CONTINUE_INSTALL" != "Y" ]; then
+      echo "安装已取消。"
+      #exit 1
+    else
+      install_socks5
+    fi
+  else
+    # 创建socks5目录
+    echo "正在创建socks5目录..."
+    mkdir -p "$SOCKS5_DIR"
+    install_socks5
+  fi
+fi
 
-echo "定义要添加的cron任务"
-CRON_JOB="*/5 * * * * /home/$USER/.npm-global/lib/node_modules/pm2/bin/pm2 resurrect >> /home/$USER/pm2_resurrect.log 2>&1"
+read -p "是否安装nezha-agent(Y/N): " choice
+choice=${choice^^} # 转换为大写
+if [ "$choice" == "Y" ]; then
+  echo "正在安装nezha-agent..."
+  install_nezha_agent
+else
+  echo "不安装nezha-agent"
+fi
 
-echo "检查crontab是否已存在该任务"
-(crontab -l | grep -F "$CRON_JOB") || (crontab -l; echo "$CRON_JOB") | crontab -
+read -p "是否保存当前pm2进程列表(Y/N)不理解的用户回车即可: " pm2save
+pm2save=${pm2save^^} # 转换为大写
+if [ "$pm2save" != "N" ]; then
+  echo "保存当前pm2进程列表"
+  pm2 save
+  read -p "是否使用crontab守护pm2进程(Y/N)不理解的用户回车即可: " crontabpm2
+  crontabpm2=${crontabpm2^^} # 转换为大写
+  if [ "$crontabpm2" != "N" ]; then
+    echo "添加crontab守护pm2进程"
+    curl -s https://raw.githubusercontent.com/cmliu/socks5-for-serv00/main/check_cron.sh | bash
+  fi
+fi
 
-echo "使用crontab守护pm2进程"
 pm2 list
 echo "脚本执行完成。致谢：RealNeoMan、k0baya"
